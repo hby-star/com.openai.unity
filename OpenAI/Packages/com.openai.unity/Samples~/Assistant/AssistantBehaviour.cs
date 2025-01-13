@@ -56,19 +56,20 @@ namespace OpenAI.Samples.Assistant
 
         [SerializeField]
         [TextArea(3, 10)]
-        private string systemPrompt = "You are a helpful assistant.\n- If an image is requested then use \"![Image](output.jpg)\" to display it.\n- When performing function calls, use the defaults unless explicitly told to use a specific value.\n- Images should always be generated in base64.";
+        private string systemPrompt =
+            "You are a helpful assistant.\n- If an image is requested then use \"![Image](output.jpg)\" to display it.\n- When performing function calls, use the defaults unless explicitly told to use a specific value.\n- Images should always be generated in base64.";
 
         private OpenAIClient openAI;
         private AssistantResponse assistant;
         private ThreadResponse thread;
         private readonly ConcurrentQueue<float> sampleQueue = new();
 
-#if !UNITY_2022_3_OR_NEWER
+// #if !UNITY_2022_3_OR_NEWER
         private readonly CancellationTokenSource lifetimeCts = new();
 
         // ReSharper disable once InconsistentNaming
-        private CancellationToken destroyCancellationToken => lifetimeCts.Token;
-#endif
+        private new CancellationToken destroyCancellationToken => lifetimeCts.Token;
+// #endif
 
         private void OnValidate()
         {
@@ -86,6 +87,7 @@ namespace OpenAI.Samples.Assistant
         private async void Awake()
         {
             OnValidate();
+
             openAI = new OpenAIClient(configuration)
             {
                 EnableDebug = enableDebug
@@ -127,8 +129,8 @@ namespace OpenAI.Samples.Assistant
                         break;
                     default:
                         Debug.LogError(e);
-                        break;
 
+                        break;
                 }
             }
             finally
@@ -137,7 +139,8 @@ namespace OpenAI.Samples.Assistant
                 {
                     if (assistant != null)
                     {
-                        var deleteAssistantResult = await assistant.DeleteAsync(deleteToolResources: thread == null, CancellationToken.None);
+                        var deleteAssistantResult = await assistant.DeleteAsync(deleteToolResources: thread == null,
+                            CancellationToken.None);
 
                         if (!deleteAssistantResult)
                         {
@@ -147,7 +150,8 @@ namespace OpenAI.Samples.Assistant
 
                     if (thread != null)
                     {
-                        var deleteThreadResult = await thread.DeleteAsync(deleteToolResources: true, CancellationToken.None);
+                        var deleteThreadResult =
+                            await thread.DeleteAsync(deleteToolResources: true, CancellationToken.None);
 
                         if (!deleteThreadResult)
                         {
@@ -164,7 +168,10 @@ namespace OpenAI.Samples.Assistant
 
         private void OnAudioFilterRead(float[] data, int channels)
         {
-            if (sampleQueue.IsEmpty) { return; }
+            if (sampleQueue.IsEmpty || !isGeneratingSpeech)
+            {
+                return;
+            }
 
             for (var i = 0; i < data.Length; i += channels)
             {
@@ -175,16 +182,24 @@ namespace OpenAI.Samples.Assistant
                         data[i + j] = sample;
                     }
                 }
+                else
+                {
+                    for (var j = 0; j < channels; j++)
+                    {
+                        data[i + j] = 0f; // Fill silence if queue is empty
+                    }
+                }
             }
         }
 
         private void OnDestroy()
         {
-#if !UNITY_2022_3_OR_NEWER
+// #if !UNITY_2022_3_OR_NEWER
             lifetimeCts.Cancel();
             lifetimeCts.Dispose();
-#endif
+// #endif
         }
+
 
         private void SubmitChat(string _) => SubmitChat();
 
@@ -192,7 +207,11 @@ namespace OpenAI.Samples.Assistant
 
         private async void SubmitChat()
         {
-            if (isChatPending || string.IsNullOrWhiteSpace(inputField.text)) { return; }
+            if (isChatPending || string.IsNullOrWhiteSpace(inputField.text))
+            {
+                return;
+            }
+
             isChatPending = true;
 
             inputField.ReleaseSelection();
@@ -220,6 +239,7 @@ namespace OpenAI.Samples.Assistant
                         break;
                     default:
                         Debug.LogError(e);
+
                         break;
                 }
             }
@@ -250,22 +270,27 @@ namespace OpenAI.Samples.Assistant
                                         assistantMessageContent.text += message.PrintContent();
                                         scrollView.verticalNormalizedPosition = 0f;
                                     }
+
                                     break;
                                 case MessageStatus.Completed:
                                     if (message.Role == Role.Assistant)
                                     {
                                         await GenerateSpeechAsync(message.PrintContent(), destroyCancellationToken);
                                     }
+
                                     break;
                             }
+
                             break;
                         case RunResponse run:
                             switch (run.Status)
                             {
                                 case RunStatus.RequiresAction:
                                     await ProcessToolCalls(run);
+
                                     break;
                             }
+
                             break;
                         case Error errorResponse:
                             throw errorResponse.Exception ?? new Exception(errorResponse.Message);
@@ -281,8 +306,12 @@ namespace OpenAI.Samples.Assistant
             {
                 Debug.Log(nameof(ProcessToolCalls));
                 var toolCalls = run.RequiredAction.SubmitToolOutputs.ToolCalls;
-                var toolOutputs = await Task.WhenAll(toolCalls.Select(toolCall => ProcessToolCall(toolCall))).ConfigureAwait(true);
-                await run.SubmitToolOutputsAsync(new SubmitToolOutputsRequest(toolOutputs), cancellationToken: destroyCancellationToken);
+
+                var toolOutputs = await Task.WhenAll(toolCalls.Select(toolCall => ProcessToolCall(toolCall)))
+                    .ConfigureAwait(true);
+
+                await run.SubmitToolOutputsAsync(new SubmitToolOutputsRequest(toolOutputs),
+                    cancellationToken: destroyCancellationToken);
             }
 
             async Task<ToolOutput> ProcessToolCall(ToolCall toolCall)
@@ -291,7 +320,9 @@ namespace OpenAI.Samples.Assistant
 
                 try
                 {
-                    var imageResults = await assistant.InvokeToolCallAsync<IReadOnlyList<ImageResult>>(toolCall, destroyCancellationToken);
+                    var imageResults =
+                        await assistant.InvokeToolCallAsync<IReadOnlyList<ImageResult>>(toolCall,
+                            destroyCancellationToken);
 
                     foreach (var imageResult in imageResults)
                     {
@@ -324,28 +355,43 @@ namespace OpenAI.Samples.Assistant
             }
 
             isGeneratingSpeech = true;
+
             try
             {
+                sampleQueue.Clear();
                 text = text.Replace("![Image](output.jpg)", string.Empty);
-                if (string.IsNullOrWhiteSpace(text)) { return; }
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    return;
+                }
 #pragma warning disable CS0612 // Type or member is obsolete
                 var request = new SpeechRequest(text, Model.TTS_1, voice, SpeechResponseFormat.PCM);
 #pragma warning restore CS0612 // Type or member is obsolete
-                var speechClip = await openAI.AudioEndpoint.GetSpeechAsync(request, partialClip =>
+                var lastProcessedSample = 0;
+
+                var speechClip = await openAI.AudioEndpoint.GetSpeechAsync(request, partialCLip =>
                 {
-                    foreach (var sample in partialClip.AudioSamples)
+                    if (partialCLip.AudioSamples.Length > lastProcessedSample)
                     {
-                        sampleQueue.Enqueue(sample);
+                        lastProcessedSample = partialCLip.AudioSamples.Length;
+
+                        var newSamples = partialCLip.AudioSamples[lastProcessedSample..];
+
+                        foreach (var sample in newSamples)
+                        {
+                            sampleQueue.Enqueue(sample);
+                        }
                     }
                 }, cancellationToken);
 
-                if (enableDebug)
-                {
-                    Debug.Log(speechClip.CachePath);
-                }
-
-                await new WaitUntil(() => sampleQueue.IsEmpty || cancellationToken.IsCancellationRequested);
                 audioSource.clip = speechClip.AudioClip;
+                audioSource.Play();
+
+                while (audioSource.isPlaying && !cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Yield();
+                }
             }
             finally
             {
@@ -410,7 +456,9 @@ namespace OpenAI.Samples.Assistant
             {
                 recordButton.interactable = false;
                 var request = new AudioTranscriptionRequest(clip, temperature: 0.1f, language: "en");
-                var userInput = await openAI.AudioEndpoint.CreateTranscriptionTextAsync(request, destroyCancellationToken);
+
+                var userInput =
+                    await openAI.AudioEndpoint.CreateTranscriptionTextAsync(request, destroyCancellationToken);
 
                 if (enableDebug)
                 {
