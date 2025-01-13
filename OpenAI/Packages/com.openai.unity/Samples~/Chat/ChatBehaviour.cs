@@ -54,7 +54,8 @@ namespace OpenAI.Samples.Chat
 
         [SerializeField]
         [TextArea(3, 10)]
-        private string systemPrompt = "You are a helpful assistant.\n- If an image is requested then use \"![Image](output.jpg)\" to display it.\n- When performing function calls, use the defaults unless explicitly told to use a specific value.\n- Images should always be generated in base64.";
+        private string systemPrompt =
+            "You are a helpful assistant.\n- If an image is requested then use \"![Image](output.jpg)\" to display it.\n- When performing function calls, use the defaults unless explicitly told to use a specific value.\n- Images should always be generated in base64.";
 
         private OpenAIClient openAI;
 
@@ -85,10 +86,12 @@ namespace OpenAI.Samples.Chat
         private void Awake()
         {
             OnValidate();
+
             openAI = new OpenAIClient(configuration)
             {
                 EnableDebug = enableDebug
             };
+
             assistantTools.Add(Tool.GetOrCreateTool(openAI.ImagesEndPoint, nameof(ImagesEndpoint.GenerateImageAsync)));
             conversation.AppendMessage(new Message(Role.System, systemPrompt));
             inputField.onSubmit.AddListener(SubmitChat);
@@ -96,21 +99,6 @@ namespace OpenAI.Samples.Chat
             recordButton.onClick.AddListener(ToggleRecording);
         }
 
-        private void OnAudioFilterRead(float[] data, int channels)
-        {
-            if (sampleQueue.Count <= 0) { return; }
-
-            for (var i = 0; i < data.Length; i += channels)
-            {
-                if (sampleQueue.TryDequeue(out var sample))
-                {
-                    for (var j = 0; j < channels; j++)
-                    {
-                        data[i + j] = sample;
-                    }
-                }
-            }
-        }
 
 #if !UNITY_2022_3_OR_NEWER
         private void OnDestroy()
@@ -126,7 +114,11 @@ namespace OpenAI.Samples.Chat
 
         private async void SubmitChat()
         {
-            if (isChatPending || string.IsNullOrWhiteSpace(inputField.text)) { return; }
+            if (isChatPending || string.IsNullOrWhiteSpace(inputField.text))
+            {
+                return;
+            }
+
             isChatPending = true;
 
             inputField.ReleaseSelection();
@@ -142,9 +134,14 @@ namespace OpenAI.Samples.Chat
             try
             {
                 var request = new ChatRequest(conversation.Messages, tools: assistantTools);
+
                 var response = await openAI.ChatEndpoint.StreamCompletionAsync(request, resultHandler: deltaResponse =>
                 {
-                    if (deltaResponse?.FirstChoice?.Delta == null) { return; }
+                    if (deltaResponse?.FirstChoice?.Delta == null)
+                    {
+                        return;
+                    }
+
                     assistantMessageContent.text += deltaResponse.FirstChoice.Delta.ToString();
                     scrollView.verticalNormalizedPosition = 0f;
                 }, cancellationToken: destroyCancellationToken);
@@ -157,7 +154,7 @@ namespace OpenAI.Samples.Chat
                     assistantMessageContent.text += response.ToString().Replace("![Image](output.jpg)", string.Empty);
                 }
 
-                await GenerateSpeechAsync(response, destroyCancellationToken);
+                await GenerateSpeechAsync(response.FirstChoice.Message.Content.ToString(), destroyCancellationToken);
             }
             catch (Exception e)
             {
@@ -168,6 +165,7 @@ namespace OpenAI.Samples.Chat
                         break;
                     default:
                         Debug.LogError(e);
+
                         break;
                 }
             }
@@ -191,7 +189,9 @@ namespace OpenAI.Samples.Chat
                 {
                     if (enableDebug)
                     {
-                        Debug.Log($"{response.FirstChoice.Message.Role}: {toolCall.Function.Name} | Finish Reason: {response.FirstChoice.FinishReason}");
+                        Debug.Log(
+                            $"{response.FirstChoice.Message.Role}: {toolCall.Function.Name} | Finish Reason: {response.FirstChoice.FinishReason}");
+
                         Debug.Log($"{toolCall.Function.Arguments}");
                     }
 
@@ -203,7 +203,9 @@ namespace OpenAI.Samples.Chat
 
                         try
                         {
-                            var imageResults = await toolCall.InvokeFunctionAsync<IReadOnlyList<ImageResult>>(destroyCancellationToken).ConfigureAwait(true);
+                            var imageResults = await toolCall
+                                .InvokeFunctionAsync<IReadOnlyList<ImageResult>>(destroyCancellationToken)
+                                .ConfigureAwait(true);
 
                             foreach (var imageResult in imageResults)
                             {
@@ -214,6 +216,7 @@ namespace OpenAI.Samples.Chat
                         {
                             Debug.LogError(e);
                             conversation.AppendMessage(new(toolCall, $"{{\"result\":\"{e.Message}\"}}"));
+
                             return;
                         }
 
@@ -228,7 +231,10 @@ namespace OpenAI.Samples.Chat
                 try
                 {
                     var toolCallRequest = new ChatRequest(conversation.Messages, tools: assistantTools);
-                    toolCallResponse = await openAI.ChatEndpoint.GetCompletionAsync(toolCallRequest, destroyCancellationToken);
+
+                    toolCallResponse =
+                        await openAI.ChatEndpoint.GetCompletionAsync(toolCallRequest, destroyCancellationToken);
+
                     conversation.AppendMessage(toolCallResponse.FirstChoice.Message);
                 }
                 catch (RestException restEx)
@@ -241,7 +247,10 @@ namespace OpenAI.Samples.Chat
                     }
 
                     var toolCallRequest = new ChatRequest(conversation.Messages, tools: assistantTools);
-                    toolCallResponse = await openAI.ChatEndpoint.GetCompletionAsync(toolCallRequest, destroyCancellationToken);
+
+                    toolCallResponse =
+                        await openAI.ChatEndpoint.GetCompletionAsync(toolCallRequest, destroyCancellationToken);
+
                     conversation.AppendMessage(toolCallResponse.FirstChoice.Message);
                 }
 
@@ -254,29 +263,86 @@ namespace OpenAI.Samples.Chat
             }
         }
 
+        private volatile bool isSpeechGenerationCompleted = false;
+
         private async Task GenerateSpeechAsync(string text, CancellationToken cancellationToken)
         {
             text = text.Replace("![Image](output.jpg)", string.Empty);
-            if (string.IsNullOrWhiteSpace(text)) { return; }
-#pragma warning disable CS0612 // Type or member is obsolete
-            var request = new SpeechRequest(text, Model.TTS_1, voice, SpeechResponseFormat.PCM);
-#pragma warning restore CS0612 // Type or member is obsolete
-            var speechClip = await openAI.AudioEndpoint.GetSpeechAsync(request, partialCLip =>
-            {
-                foreach (var sample in partialCLip.AudioSamples)
-                {
-                    sampleQueue.Enqueue(sample);
-                }
-            }, destroyCancellationToken);
 
-            if (enableDebug)
+            if (string.IsNullOrWhiteSpace(text))
             {
-                Debug.Log(speechClip.CachePath);
+                return;
             }
 
-            await new WaitUntil(() => sampleQueue.IsEmpty || cancellationToken.IsCancellationRequested);
-            audioSource.clip = speechClip.AudioClip;
+            try
+            {
+                sampleQueue.Clear();
+                isSpeechGenerationCompleted = false;
+
+#pragma warning disable CS0612 // Type or member is obsolete
+                var request = new SpeechRequest(text, Model.TTS_1, voice, SpeechResponseFormat.PCM);
+#pragma warning restore CS0612 // Type or member is obsolete
+
+                var lastProcessedSample = 0;
+
+                var speechClip = await openAI.AudioEndpoint.GetSpeechAsync(request, partialCLip =>
+                {
+                    if (partialCLip.AudioSamples.Length > lastProcessedSample)
+                    {
+                        lastProcessedSample = partialCLip.AudioSamples.Length;
+
+                        var newSamples = partialCLip.AudioSamples[lastProcessedSample..];
+
+                        foreach (var sample in newSamples)
+                        {
+                            sampleQueue.Enqueue(sample);
+                        }
+                    }
+                }, cancellationToken);
+
+                audioSource.clip = speechClip.AudioClip;
+                audioSource.Play();
+
+                while (audioSource.isPlaying && !cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Yield();
+                }
+
+                isSpeechGenerationCompleted = true;
+                Debug.Log("Speech generation completed.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"GenerateSpeechAsync failed: {ex.Message}");
+            }
         }
+
+        private void OnAudioFilterRead(float[] data, int channels)
+        {
+            if (sampleQueue.IsEmpty || isSpeechGenerationCompleted)
+            {
+                return;
+            }
+
+            for (var i = 0; i < data.Length; i += channels)
+            {
+                if (sampleQueue.TryDequeue(out var sample))
+                {
+                    for (var j = 0; j < channels; j++)
+                    {
+                        data[i + j] = sample;
+                    }
+                }
+                else
+                {
+                    for (var j = 0; j < channels; j++)
+                    {
+                        data[i + j] = 0f; // Fill silence if queue is empty
+                    }
+                }
+            }
+        }
+
 
         private TextMeshProUGUI AddNewTextMessageContent(Role role)
         {
@@ -335,7 +401,9 @@ namespace OpenAI.Samples.Chat
             {
                 recordButton.interactable = false;
                 var request = new AudioTranscriptionRequest(clip, temperature: 0.1f, language: "en");
-                var userInput = await openAI.AudioEndpoint.CreateTranscriptionTextAsync(request, destroyCancellationToken);
+
+                var userInput =
+                    await openAI.AudioEndpoint.CreateTranscriptionTextAsync(request, destroyCancellationToken);
 
                 if (enableDebug)
                 {
